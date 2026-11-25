@@ -112,7 +112,7 @@ export default function ReviewBillPage() {
   useEffect(() => {
     const draft = loadDraft();
     if (!draft) {
-      router.replace('/');
+      router.replace('/new');
       return;
     }
     setLanguage(draft.language);
@@ -238,7 +238,7 @@ export default function ReviewBillPage() {
 
   function handleReRecord() {
     clearDraft();
-    router.push('/');
+    router.push('/new');
   }
 
   async function handleSave() {
@@ -371,7 +371,7 @@ export default function ReviewBillPage() {
                 Open Public Bill
               </Link>
 
-              <Link href="/" className="mt-2 min-h-[44px] py-2 text-sm font-semibold text-[#7a6558] underline">
+              <Link href="/new" className="mt-2 min-h-[44px] py-2 text-sm font-semibold text-[#7a6558] underline">
                 Take another order
               </Link>
             </div>

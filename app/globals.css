@@ -83,10 +83,40 @@ h3,
   animation: bb-wave 0.9s ease-in-out infinite;
 }
 
+@keyframes bb-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bb-fade-up {
+  animation: bb-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.bb-delay-1 {
+  animation-delay: 80ms;
+}
+
+.bb-delay-2 {
+  animation-delay: 160ms;
+}
+
+.bb-delay-3 {
+  animation-delay: 240ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bb-pulse-ring,
-  .bb-wave-bar {
+  .bb-wave-bar,
+  .bb-fade-up {
     animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
 }
 

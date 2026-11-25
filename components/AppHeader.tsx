@@ -43,7 +43,7 @@ export function AppHeader() {
   const { shop, ready } = useShop();
   const [editOpen, setEditOpen] = useState(false);
 
-  const isHome = pathname === '/';
+  const isHome = pathname === '/new';
   const isOrders = pathname.startsWith('/orders');
 
   return (
@@ -82,7 +82,7 @@ export function AppHeader() {
           {/* Desktop / Tablet header nav */}
           <nav className="hidden shrink-0 items-center gap-2 sm:flex" aria-label="Primary">
             <Link
-              href="/"
+              href="/new"
               className={`flex min-h-[44px] items-center rounded-xl px-4 py-2 text-sm font-bold transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffdca8] ${
                 isHome
                   ? 'bg-[#e8892b] text-[#2a1a14] shadow-sm'
@@ -112,7 +112,7 @@ export function AppHeader() {
       >
         <div className="mx-auto grid max-w-5xl grid-cols-2 px-4 py-1.5">
           <Link
-            href="/"
+            href="/new"
             className={`flex min-h-[48px] flex-col items-center justify-center gap-0.5 rounded-xl text-xs font-bold transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#7a1f2b] ${
               isHome ? 'bg-[#fff0d6] text-[#7a1f2b]' : 'text-[#7a6558] hover:text-[#4a3328]'
             }`}

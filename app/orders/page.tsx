@@ -234,7 +234,7 @@ export default function OrdersDashboardPage() {
               Speak or type your first customer order to create a shareable bill.
             </p>
             <Link
-              href="/"
+              href="/new"
               className="mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-[#7a1f2b] px-5 py-2.5 text-sm font-bold text-white"
             >
               Record your first order
