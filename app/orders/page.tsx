@@ -1,12 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '@/components/AppHeader';
 import { listOrders, recordPayment, sendReminder } from '@/lib/client/api';
 import { useShop } from '@/lib/client/shop';
 import type { OrderSummary, ReminderResponse } from '@/lib/contract';
 import { inr, round2 } from '@/lib/money';
+
+type FilterTab = 'all' | 'pending' | 'overdue' | 'paid';
 
 function formatDueDate(iso: string | null): string {
   if (!iso) return '—';
@@ -37,18 +39,43 @@ function StatusChip({ order }: { order: OrderSummary }) {
   );
 }
 
+function sortOrders(list: OrderSummary[]): OrderSummary[] {
+  return [...list].sort((a, b) => {
+    const rank = (o: OrderSummary) => (o.overdue ? 0 : o.status === 'pending' ? 1 : 2);
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+
+    if (ra === 1) {
+      // Pending: sort by due_date ascending (nulls last)
+      if (a.due_date && b.due_date) return a.due_date.localeCompare(b.due_date);
+      if (a.due_date) return -1;
+      if (b.due_date) return 1;
+    }
+
+    return b.created_at.localeCompare(a.created_at);
+  });
+}
+
 export default function OrdersDashboardPage() {
   const { shop, ready: shopReady } = useShop();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [filter, setFilter] = useState<FilterTab>('all');
+  const [search, setSearch] = useState('');
+
   const [paymentInputs, setPaymentInputs] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [reminderInfo, setReminderInfo] = useState<Record<string, ReminderResponse>>({});
 
   const refreshOrders = useCallback(async () => {
-    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
+    if (!shop) {
+      setOrders([]);
+      setLoading(false);
+      return;
+    }
     try {
       setError(null);
       const data = await listOrders(shop.vendor_key);
@@ -68,6 +95,25 @@ export default function OrdersDashboardPage() {
     orders.reduce((sum, o) => (o.status === 'pending' ? sum + o.balance : sum), 0),
   );
 
+  const counts = useMemo(() => {
+    const pending = orders.filter((o) => o.status === 'pending' && !o.overdue).length;
+    const overdue = orders.filter((o) => o.overdue).length;
+    const paid = orders.filter((o) => o.status === 'paid').length;
+    return { all: orders.length, pending: pending + overdue, overdue, paid };
+  }, [orders]);
+
+  const visibleOrders = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const filtered = orders.filter((o) => {
+      if (filter === 'pending' && o.status !== 'pending') return false;
+      if (filter === 'overdue' && !o.overdue) return false;
+      if (filter === 'paid' && o.status !== 'paid') return false;
+      if (q && !o.customer_name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+    return sortOrders(filtered);
+  }, [orders, filter, search]);
+
   async function handlePayment(order: OrderSummary) {
     const raw = paymentInputs[order.id] ?? String(order.balance);
     const amount = Number(raw);
@@ -77,7 +123,6 @@ export default function OrdersDashboardPage() {
     }
     setError(null);
     setBusyId(order.id);
-    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
     try {
       await recordPayment(order.id, { amount });
       setPaymentInputs((prev) => ({ ...prev, [order.id]: '' }));
@@ -92,7 +137,6 @@ export default function OrdersDashboardPage() {
   async function handleReminder(order: OrderSummary) {
     setError(null);
     setBusyId(order.id);
-    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
     try {
       const res = await sendReminder(order.id);
       setReminderInfo((prev) => ({ ...prev, [order.id]: res }));
@@ -104,26 +148,73 @@ export default function OrdersDashboardPage() {
     }
   }
 
+  const filterTabs: { key: FilterTab; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: counts.all },
+    { key: 'pending', label: 'Pending', count: counts.pending },
+    { key: 'overdue', label: 'Overdue', count: counts.overdue },
+    { key: 'paid', label: 'Paid', count: counts.paid },
+  ];
+
   return (
-    <div className="min-h-screen bg-[#fff8ec] pb-12">
+    <div className="min-h-screen bg-[#fff8ec]">
       <AppHeader />
 
-      <main className="mx-auto flex max-w-4xl flex-col gap-5 px-4 py-5">
+      <main className="mx-auto flex max-w-5xl flex-col gap-5 px-4 pt-5 pb-24 sm:pb-12">
         {/* Summary Header */}
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadbc8] bg-white px-5 py-4 shadow-sm">
+        <section className="bb-card flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <div>
-            <h1 className="text-xl font-extrabold text-[#7a1f2b]">Orders</h1>
-            <p className="text-xs text-[#6e584f]">
+            <h1 className="font-heading text-2xl font-extrabold text-[#7a1f2b]">
+              {shop ? `Orders, ${shop.name}` : 'Orders'}
+            </h1>
+            <p className="text-xs text-[#4a3328]">
               {orders.length} order{orders.length === 1 ? '' : 's'} total
             </p>
           </div>
           <div className="text-right">
-            <span className="block text-[11px] font-bold tracking-wide text-[#6e584f] uppercase">
+            <span className="block text-[11px] font-bold tracking-wide text-[#7a6558] uppercase">
               Total Outstanding
             </span>
-            <span className="text-2xl font-black text-[#7a1f2b]">{inr(totalOutstanding)}</span>
+            <span className="font-heading text-2xl font-black text-[#7a1f2b]">
+              {inr(totalOutstanding)}
+            </span>
           </div>
         </section>
+
+        {/* Filter chips + Search box */}
+        {orders.length > 0 && (
+          <section className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter orders">
+              {filterTabs.map((tab) => {
+                const active = filter === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => setFilter(tab.key)}
+                    className={`min-h-[40px] rounded-full px-3.5 py-1.5 text-xs font-bold transition active:scale-[0.98] ${
+                      active
+                        ? 'bg-[#7a1f2b] text-white shadow-sm'
+                        : 'border border-[#f1e3cc] bg-white text-[#4a3328] hover:border-[#e8892b]'
+                    }`}
+                  >
+                    {tab.label} ({tab.count})
+                  </button>
+                );
+              })}
+            </div>
+
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search customer…"
+              aria-label="Search customer"
+              className="min-h-[42px] w-full rounded-xl border border-[#f1e3cc] bg-white px-3.5 text-sm text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none sm:w-64"
+            />
+          </section>
+        )}
 
         {error && (
           <div
@@ -135,32 +226,34 @@ export default function OrdersDashboardPage() {
         )}
 
         {loading ? (
-          <div className="rounded-2xl border border-[#eadbc8] bg-white p-8 text-center text-sm text-[#6e584f]">
-            Loading orders…
-          </div>
+          <div className="bb-card p-8 text-center text-sm text-[#7a6558]">Loading orders…</div>
         ) : orders.length === 0 ? (
-          <div className="rounded-2xl border border-[#eadbc8] bg-white p-8 text-center">
-            <p className="text-sm text-[#6e584f]">No orders yet.</p>
+          <div className="bb-card p-8 text-center">
+            <p className="font-heading text-lg font-extrabold text-[#7a1f2b]">No orders yet</p>
+            <p className="mt-1 text-sm text-[#4a3328]">
+              Speak or type your first customer order to create a shareable bill.
+            </p>
             <Link
               href="/"
-              className="mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-[#7a1f2b] px-5 py-2 text-sm font-bold text-[#fff8ec]"
+              className="mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-[#7a1f2b] px-5 py-2.5 text-sm font-bold text-white"
             >
               Record your first order
             </Link>
+          </div>
+        ) : visibleOrders.length === 0 ? (
+          <div className="bb-card p-8 text-center text-sm text-[#7a6558]">
+            No matching orders found.
           </div>
         ) : (
           <>
             {/* Mobile Cards (390px) */}
             <section className="flex flex-col gap-3 md:hidden" aria-label="Orders list">
-              {orders.map((order) => {
+              {visibleOrders.map((order) => {
                 const reminder = reminderInfo[order.id];
                 const isBusy = busyId === order.id;
 
                 return (
-                  <article
-                    key={order.id}
-                    className="rounded-2xl border border-[#eadbc8] bg-white p-4 shadow-sm"
-                  >
+                  <article key={order.id} className="bb-card p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <Link
@@ -170,7 +263,7 @@ export default function OrdersDashboardPage() {
                           {order.customer_name}
                         </Link>
                         {order.customer_phone && (
-                          <p className="text-xs text-[#6e584f]">+{order.customer_phone}</p>
+                          <p className="text-xs text-[#7a6558]">+{order.customer_phone}</p>
                         )}
                       </div>
                       <StatusChip order={order} />
@@ -178,28 +271,31 @@ export default function OrdersDashboardPage() {
 
                     <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl bg-[#fff8ec] p-2.5 text-center text-xs">
                       <div>
-                        <span className="block text-[#6e584f]">Total</span>
+                        <span className="block text-[#7a6558]">Total</span>
                         <span className="font-bold text-[#2a1a14]">{inr(order.total)}</span>
                       </div>
                       <div>
-                        <span className="block text-[#6e584f]">Advance</span>
+                        <span className="block text-[#7a6558]">Advance</span>
                         <span className="font-bold text-[#2a1a14]">{inr(order.advance_paid)}</span>
                       </div>
                       <div>
-                        <span className="block text-[#6e584f]">Balance</span>
+                        <span className="block text-[#7a6558]">Balance</span>
                         <span className="font-extrabold text-[#7a1f2b]">{inr(order.balance)}</span>
                       </div>
                     </div>
 
-                    <div className="mt-2 flex items-center justify-between text-xs text-[#6e584f]">
+                    <div className="mt-2 flex items-center justify-between text-xs text-[#7a6558]">
                       <span>Due: {formatDueDate(order.due_date)}</span>
-                      <Link href={`/b/${order.slug}`} className="font-semibold text-[#7a1f2b] underline">
+                      <Link
+                        href={`/b/${order.slug}`}
+                        className="font-semibold text-[#7a1f2b] underline"
+                      >
                         View Bill
                       </Link>
                     </div>
 
                     {order.status === 'pending' && (
-                      <div className="mt-3 flex flex-col gap-2 border-t border-[#eadbc8] pt-3">
+                      <div className="mt-3 flex flex-col gap-2 border-t border-[#f1e3cc] pt-3">
                         <div className="flex gap-2">
                           <input
                             type="number"
@@ -214,13 +310,13 @@ export default function OrdersDashboardPage() {
                                 [order.id]: e.target.value,
                               }))
                             }
-                            className="min-h-[44px] w-28 rounded-xl border border-[#eadbc8] bg-[#fff8ec] px-3 text-sm font-bold text-[#2a1a14]"
+                            className="min-h-[44px] w-28 rounded-xl border border-[#f1e3cc] bg-[#fff8ec] px-3 text-sm font-bold text-[#2a1a14]"
                           />
                           <button
                             type="button"
                             disabled={isBusy}
                             onClick={() => handlePayment(order)}
-                            className="min-h-[44px] flex-1 rounded-xl bg-[#7a1f2b] px-3 text-xs font-bold text-[#fff8ec] transition hover:bg-[#5b151e] disabled:opacity-50"
+                            className="min-h-[44px] flex-1 rounded-xl bg-[#7a1f2b] px-3 text-xs font-bold text-white transition hover:bg-[#5b151e] disabled:opacity-50"
                           >
                             Mark payment received
                           </button>
@@ -237,10 +333,7 @@ export default function OrdersDashboardPage() {
 
                         {reminder && (
                           <div className="rounded-xl bg-[#fff0d6] px-3 py-2 text-xs text-[#2a1a14]">
-                            <span className="font-bold">
-                              Variant used: {reminder.variant}
-                            </span>{' '}
-                            •{' '}
+                            <span className="font-bold">Variant used: {reminder.variant}</span> •{' '}
                             <a
                               href={reminder.wa_url}
                               target="_blank"
@@ -259,9 +352,9 @@ export default function OrdersDashboardPage() {
             </section>
 
             {/* Desktop Table */}
-            <section className="hidden overflow-hidden rounded-2xl border border-[#eadbc8] bg-white shadow-sm md:block">
+            <section className="bb-card hidden overflow-hidden md:block">
               <table className="w-full border-collapse text-left text-sm">
-                <thead className="border-b border-[#eadbc8] bg-[#fff8ec] text-xs font-bold text-[#6e584f] uppercase">
+                <thead className="border-b border-[#f1e3cc] bg-[#fff8ec] text-xs font-bold text-[#7a6558] uppercase">
                   <tr>
                     <th className="px-4 py-3">Customer</th>
                     <th className="px-3 py-3 text-right">Total</th>
@@ -273,7 +366,7 @@ export default function OrdersDashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#f3e7d8]">
-                  {orders.map((order) => {
+                  {visibleOrders.map((order) => {
                     const reminder = reminderInfo[order.id];
                     const isBusy = busyId === order.id;
 
@@ -287,17 +380,17 @@ export default function OrdersDashboardPage() {
                             {order.customer_name}
                           </Link>
                           {order.customer_phone && (
-                            <div className="text-xs text-[#6e584f]">+{order.customer_phone}</div>
+                            <div className="text-xs text-[#7a6558]">+{order.customer_phone}</div>
                           )}
                         </td>
                         <td className="px-3 py-3 text-right font-medium">{inr(order.total)}</td>
-                        <td className="px-3 py-3 text-right text-[#6e584f]">
+                        <td className="px-3 py-3 text-right text-[#4a3328]">
                           {inr(order.advance_paid)}
                         </td>
                         <td className="px-3 py-3 text-right font-extrabold text-[#7a1f2b]">
                           {inr(order.balance)}
                         </td>
-                        <td className="px-3 py-3 text-xs text-[#6e584f]">
+                        <td className="px-3 py-3 text-xs text-[#7a6558]">
                           {formatDueDate(order.due_date)}
                         </td>
                         <td className="px-3 py-3">
@@ -320,13 +413,13 @@ export default function OrdersDashboardPage() {
                                       [order.id]: e.target.value,
                                     }))
                                   }
-                                  className="min-h-[36px] w-24 rounded-lg border border-[#eadbc8] bg-[#fff8ec] px-2 text-xs font-bold"
+                                  className="min-h-[38px] w-24 rounded-lg border border-[#f1e3cc] bg-[#fff8ec] px-2 text-xs font-bold"
                                 />
                                 <button
                                   type="button"
                                   disabled={isBusy}
                                   onClick={() => handlePayment(order)}
-                                  className="min-h-[36px] rounded-lg bg-[#7a1f2b] px-2.5 text-xs font-bold text-[#fff8ec] hover:bg-[#5b151e] disabled:opacity-50"
+                                  className="min-h-[38px] rounded-lg bg-[#7a1f2b] px-2.5 text-xs font-bold text-white hover:bg-[#5b151e] disabled:opacity-50"
                                 >
                                   Mark payment received
                                 </button>
@@ -334,13 +427,13 @@ export default function OrdersDashboardPage() {
                                   type="button"
                                   disabled={isBusy}
                                   onClick={() => handleReminder(order)}
-                                  className="min-h-[36px] rounded-lg bg-[#e8892b] px-2.5 text-xs font-extrabold text-[#2a1a14] hover:bg-[#d97b1e] disabled:opacity-50"
+                                  className="min-h-[38px] rounded-lg bg-[#e8892b] px-2.5 text-xs font-extrabold text-[#2a1a14] hover:bg-[#d97b1e] disabled:opacity-50"
                                 >
                                   Send reminder
                                 </button>
                               </div>
                               {reminder && (
-                                <span className="text-xs text-[#6e584f]">
+                                <span className="text-xs text-[#4a3328]">
                                   Variant used: <strong>{reminder.variant}</strong> •{' '}
                                   <a
                                     href={reminder.wa_url}
@@ -356,7 +449,7 @@ export default function OrdersDashboardPage() {
                           ) : (
                             <Link
                               href={`/b/${order.slug}`}
-                              className="text-xs font-semibold text-[#6e584f] underline"
+                              className="text-xs font-semibold text-[#7a6558] underline"
                             >
                               View bill
                             </Link>
