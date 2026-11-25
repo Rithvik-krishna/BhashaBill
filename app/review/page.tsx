@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AppHeader } from '@/components/AppHeader';
 import { saveOrder } from '@/lib/client/api';
+import { addDaysIso, formatShortDate, parseDueText } from '@/lib/client/dates';
 import { clearDraft, loadDraft } from '@/lib/client/draft';
 import { useShop } from '@/lib/client/shop';
 import type { BillItemInput, Lang, SaveOrderResponse } from '@/lib/contract';
@@ -17,8 +18,22 @@ interface EditableRow {
   name_english: string;
   quantity: string;
   unit: string;
-  rate: string; // empty string => missing rate
+  rate: string;
 }
+
+interface ValidationIssue {
+  fieldId: string;
+  message: string;
+}
+
+const LANG_NAMES: Record<Lang, string> = {
+  kn: 'Kannada',
+  hi: 'Hindi',
+  ta: 'Tamil',
+  en: 'English',
+};
+
+const UNIT_OPTIONS = ['kg', 'g', 'pcs', 'box', 'dozen', 'litre', 'packet'];
 
 function makeKey(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -38,6 +53,42 @@ function parseNonNegativeNum(v: string): number {
   return round2(n);
 }
 
+function StepIndicator({ active }: { active: 'review' | 'share' }) {
+  const steps = [
+    { key: 'speak', label: '1. Speak', done: true },
+    { key: 'review', label: '2. Review', done: active === 'share' },
+    { key: 'share', label: '3. Share', done: false },
+  ];
+
+  return (
+    <nav aria-label="Order progress" className="mb-4 flex items-center gap-2 text-xs font-bold">
+      {steps.map((step, idx) => {
+        const isCurrent = step.key === active;
+        return (
+          <div key={step.key} className="flex items-center gap-2">
+            <span
+              className={`rounded-full px-3 py-1 ${
+                isCurrent
+                  ? 'bg-[#7a1f2b] text-white'
+                  : step.done
+                    ? 'bg-[#fff0d6] text-[#7a1f2b]'
+                    : 'bg-white text-[#7a6558] ring-1 ring-[#f1e3cc]'
+              }`}
+            >
+              {step.label}
+            </span>
+            {idx < steps.length - 1 && (
+              <span className="text-[#7a6558]" aria-hidden="true">
+                ›
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
 export default function ReviewBillPage() {
   const router = useRouter();
   const { shop } = useShop();
@@ -49,10 +100,12 @@ export default function ReviewBillPage() {
   const [advanceStr, setAdvanceStr] = useState('0');
   const [dueDate, setDueDate] = useState('');
   const [dueDateText, setDueDateText] = useState<string | null>(null);
+  const [parsedHeardIso, setParsedHeardIso] = useState<string | null>(null);
   const [rows, setRows] = useState<EditableRow[]>([]);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showIssues, setShowIssues] = useState(false);
   const [savedOrder, setSavedOrder] = useState<SaveOrderResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -70,7 +123,13 @@ export default function ReviewBillPage() {
         ? String(draft.extracted.advance_paid)
         : '0',
     );
-    setDueDateText(draft.extracted.due_date_text ?? null);
+    const heard = draft.extracted.due_date_text ?? null;
+    setDueDateText(heard);
+    const parsedIso = parseDueText(heard);
+    setParsedHeardIso(parsedIso);
+    if (parsedIso) {
+      setDueDate(parsedIso);
+    }
 
     const mapped: EditableRow[] = (draft.extracted.items ?? []).map((item) => ({
       key: makeKey(),
@@ -80,12 +139,30 @@ export default function ReviewBillPage() {
       unit: item.unit ?? '',
       rate: item.rate !== null && item.rate !== undefined ? String(item.rate) : '',
     }));
-    setRows(
+    const finalRows =
       mapped.length > 0
         ? mapped
-        : [{ key: makeKey(), name_original: '', name_english: '', quantity: '1', unit: 'kg', rate: '' }],
-    );
+        : [{ key: makeKey(), name_original: '', name_english: '', quantity: '1', unit: 'kg', rate: '' }];
+    setRows(finalRows);
     setReady(true);
+
+    // Autofocus the first missing rate on arrival
+    const firstMissing = finalRows.find((r) => parsePositiveNum(r.rate) === null);
+    if (firstMissing) {
+      setTimeout(() => {
+        const el =
+          document.getElementById(`rate-desktop-${firstMissing.key}`) ||
+          document.getElementById(`rate-mobile-${firstMissing.key}`);
+        if (el && el.offsetParent !== null) {
+          el.focus();
+        } else {
+          // Fallback if desktop/mobile hidden check differs
+          const desktopEl = document.getElementById(`rate-desktop-${firstMissing.key}`);
+          const mobileEl = document.getElementById(`rate-mobile-${firstMissing.key}`);
+          (desktopEl && desktopEl.offsetParent !== null ? desktopEl : mobileEl)?.focus();
+        }
+      }, 60);
+    }
   }, [router]);
 
   const parsedForTotals = rows.map((r) => ({
@@ -95,7 +172,54 @@ export default function ReviewBillPage() {
   const advanceVal = parseNonNegativeNum(advanceStr);
   const { total, balance } = totals(parsedForTotals, advanceVal, 0);
 
-  const missingRateCount = rows.filter((r) => parsePositiveNum(r.rate) === null).length;
+  // Build ordered validation issues
+  const validationIssues: ValidationIssue[] = [];
+  if (!customerName.trim()) {
+    validationIssues.push({ fieldId: 'customer-name', message: 'Enter customer name' });
+  }
+  rows.forEach((r, idx) => {
+    const label = r.name_english.trim() || r.name_original.trim() || `Item #${idx + 1}`;
+    if (!r.name_english.trim() && !r.name_original.trim()) {
+      validationIssues.push({
+        fieldId: `name-mobile-${r.key}`,
+        message: `Enter a name for Item #${idx + 1}`,
+      });
+    }
+    if (parsePositiveNum(r.quantity) === null) {
+      validationIssues.push({
+        fieldId: `qty-mobile-${r.key}`,
+        message: `Enter a valid quantity for ${label}`,
+      });
+    }
+    if (parsePositiveNum(r.rate) === null) {
+      validationIssues.push({
+        fieldId: `rate-mobile-${r.key}`,
+        message: `Enter a rate for ${label}`,
+      });
+    }
+  });
+  if (total > 0 && advanceVal > total) {
+    validationIssues.push({
+      fieldId: 'advance-paid',
+      message: 'Advance is more than the total',
+    });
+  }
+
+  function focusField(fieldId: string) {
+    // Handle responsive desktop vs mobile duplicate IDs cleanly
+    let el = document.getElementById(fieldId);
+    if (fieldId.startsWith('rate-mobile-') || fieldId.startsWith('qty-mobile-') || fieldId.startsWith('name-mobile-')) {
+      const desktopId = fieldId.replace('-mobile-', '-desktop-');
+      const desktopEl = document.getElementById(desktopId);
+      if (desktopEl && desktopEl.offsetParent !== null) {
+        el = desktopEl;
+      }
+    }
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus();
+    }
+  }
 
   function updateRow(key: string, patch: Partial<EditableRow>) {
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -119,41 +243,25 @@ export default function ReviewBillPage() {
 
   async function handleSave() {
     setSaveError(null);
-    if (!customerName.trim()) {
-      setSaveError('Please enter the customer name.');
-      return;
-    }
-    if (rows.length === 0) {
-      setSaveError('Please add at least one item.');
-      return;
-    }
-    if (missingRateCount > 0) {
-      setSaveError('Please fill in the rate (₹) for every highlighted row before saving.');
+    if (validationIssues.length > 0) {
+      setShowIssues(true);
+      focusField(validationIssues[0].fieldId);
       return;
     }
 
-    const items: BillItemInput[] = [];
-    for (const r of rows) {
-      const qty = parsePositiveNum(r.quantity);
-      const rate = parsePositiveNum(r.rate);
-      if (!qty || !rate) {
-        setSaveError('Every item must have a valid quantity and rate.');
-        return;
-      }
+    const items: BillItemInput[] = rows.map((r) => {
+      const qty = parsePositiveNum(r.quantity)!;
+      const rate = parsePositiveNum(r.rate)!;
       const english = r.name_english.trim() || r.name_original.trim();
       const original = r.name_original.trim() || r.name_english.trim();
-      if (!english && !original) {
-        setSaveError('Every item must have a name.');
-        return;
-      }
-      items.push({
+      return {
         name_original: original,
         name_english: english,
         quantity: qty,
         unit: r.unit.trim() || null,
         rate,
-      });
-    }
+      };
+    });
 
     setSaving(true);
     try {
@@ -182,7 +290,7 @@ export default function ReviewBillPage() {
     return (
       <div className="min-h-screen bg-[#fff8ec]">
         <AppHeader />
-        <main className="mx-auto max-w-2xl px-4 py-10 text-center text-sm text-[#6e584f]">
+        <main className="mx-auto max-w-5xl px-4 py-10 text-center text-sm text-[#7a6558]">
           Loading draft…
         </main>
       </div>
@@ -216,19 +324,20 @@ export default function ReviewBillPage() {
     return (
       <div className="min-h-screen bg-[#fff8ec]">
         <AppHeader />
-        <main className="mx-auto flex max-w-md flex-col gap-5 px-4 py-8">
-          <div className="rounded-3xl border border-emerald-300 bg-white p-6 text-center shadow-sm">
+        <main className="mx-auto flex max-w-md flex-col gap-5 px-4 pt-6 pb-24 sm:pb-12">
+          <StepIndicator active="share" />
+          <div className="bb-card border-emerald-300 p-6 text-center">
             <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl font-bold text-emerald-700">
               ✓
             </div>
-            <h1 className="text-2xl font-extrabold text-[#7a1f2b]">Bill Saved!</h1>
-            <p className="mt-1 text-sm text-[#6e584f]">
+            <h1 className="font-heading text-2xl font-extrabold text-[#7a1f2b]">Bill Saved!</h1>
+            <p className="mt-1 text-sm text-[#4a3328]">
               Bill for <strong className="text-[#2a1a14]">{customerName}</strong> • Balance{' '}
               <strong className="text-[#7a1f2b]">{inr(balance)}</strong>
             </p>
 
-            <div className="mt-5 rounded-2xl border border-[#eadbc8] bg-[#fff8ec] p-3 text-left">
-              <p className="text-xs font-bold text-[#6e584f] uppercase">Public Bill Link</p>
+            <div className="mt-5 rounded-2xl border border-[#f1e3cc] bg-[#fff8ec] p-3 text-left">
+              <p className="text-xs font-bold text-[#7a6558] uppercase">Public Bill Link</p>
               <Link
                 href={publicPath}
                 className="mt-1 block break-all text-sm font-bold text-[#7a1f2b] underline"
@@ -242,7 +351,7 @@ export default function ReviewBillPage() {
                 href={waUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex min-h-[50px] w-full items-center justify-center rounded-2xl bg-[#25D366] px-4 py-3 text-base font-extrabold text-white shadow-sm transition hover:bg-[#1fb858]"
+                className="flex min-h-[48px] w-full items-center justify-center rounded-2xl bg-[#25D366] px-4 py-3 text-base font-extrabold text-white shadow-sm transition hover:bg-[#1fb858]"
               >
                 Share on WhatsApp
               </a>
@@ -262,10 +371,7 @@ export default function ReviewBillPage() {
                 Open Public Bill
               </Link>
 
-              <Link
-                href="/"
-                className="mt-2 text-sm font-semibold text-[#6e584f] underline"
-              >
+              <Link href="/" className="mt-2 min-h-[44px] py-2 text-sm font-semibold text-[#7a6558] underline">
                 Take another order
               </Link>
             </div>
@@ -276,286 +382,477 @@ export default function ReviewBillPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#fff8ec] pb-12">
+    <div className="min-h-screen bg-[#fff8ec]">
       <AppHeader />
 
-      <main className="mx-auto flex max-w-2xl flex-col gap-5 px-4 py-5">
-        <div className="flex items-center justify-between gap-2">
+      <datalist id="unit-options">
+        {UNIT_OPTIONS.map((u) => (
+          <option key={u} value={u} />
+        ))}
+      </datalist>
+
+      <main className="mx-auto max-w-5xl px-4 pt-5 pb-44 sm:pb-32 lg:pb-12">
+        <StepIndicator active="review" />
+
+        <div className="mb-5 flex items-center justify-between gap-2">
           <div>
-            <h1 className="text-xl font-extrabold text-[#7a1f2b]">Review Bill</h1>
-            <p className="text-xs text-[#6e584f]">
+            <h1 className="font-heading text-2xl font-extrabold text-[#7a1f2b]">Review Bill</h1>
+            <p className="text-xs text-[#4a3328]">
               Check items, fill any missing rates, then Save &amp; Share.
             </p>
           </div>
           <button
             type="button"
             onClick={handleReRecord}
-            className="min-h-[40px] rounded-xl border border-[#eadbc8] bg-white px-3.5 py-2 text-xs font-bold text-[#7a1f2b] hover:border-[#e8892b]"
+            className="min-h-[44px] rounded-xl border border-[#f1e3cc] bg-white px-4 py-2 text-xs font-bold text-[#7a1f2b] hover:border-[#e8892b]"
           >
             Re-record
           </button>
         </div>
 
-        {/* Editable Transcript */}
-        <section className="rounded-2xl border border-[#eadbc8] bg-white p-4 shadow-sm">
-          <label htmlFor="transcript" className="block text-xs font-bold text-[#6e584f] uppercase">
-            Spoken Order Transcript
-          </label>
-          <textarea
-            id="transcript"
-            rows={2}
-            value={transcript}
-            onChange={(e) => setTranscript(e.target.value)}
-            className="mt-2 w-full rounded-xl border border-[#eadbc8] bg-[#fff8ec] p-2.5 text-sm text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
-          />
-        </section>
-
-        {/* Customer Details */}
-        <section className="grid grid-cols-1 gap-3 rounded-2xl border border-[#eadbc8] bg-white p-4 shadow-sm sm:grid-cols-2">
-          <div>
-            <label htmlFor="customer-name" className="block text-xs font-bold text-[#6e584f] uppercase">
-              Customer Name *
-            </label>
-            <input
-              id="customer-name"
-              type="text"
-              value={customerName}
-              onChange={(e) => setCustomerName(e.target.value)}
-              placeholder="e.g. Ramesh"
-              className="mt-1 min-h-[44px] w-full rounded-xl border border-[#eadbc8] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="customer-phone" className="block text-xs font-bold text-[#6e584f] uppercase">
-              Phone (optional)
-            </label>
-            <input
-              id="customer-phone"
-              type="tel"
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
-              placeholder="e.g. 919845012345"
-              className="mt-1 min-h-[44px] w-full rounded-xl border border-[#eadbc8] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="advance-paid" className="block text-xs font-bold text-[#6e584f] uppercase">
-              Advance Paid (₹)
-            </label>
-            <input
-              id="advance-paid"
-              type="number"
-              min="0"
-              step="any"
-              value={advanceStr}
-              onChange={(e) => setAdvanceStr(e.target.value)}
-              className="mt-1 min-h-[44px] w-full rounded-xl border border-[#eadbc8] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
-            />
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between gap-2">
-              <label htmlFor="due-date" className="block text-xs font-bold text-[#6e584f] uppercase">
-                Due Date
-              </label>
-              {dueDateText && (
-                <span className="rounded-full bg-[#fff0d6] px-2 py-0.5 text-[11px] font-semibold text-[#7a1f2b]">
-                  Heard: {dueDateText}
+        {/* Desktop 2-column grid */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-5 lg:items-start lg:gap-8">
+          {/* Left sticky column (2/5): What we heard */}
+          <aside className="lg:sticky lg:top-20 lg:col-span-2">
+            <section className="bb-card p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="transcript" className="font-heading text-base font-extrabold text-[#7a1f2b]">
+                  What we heard
+                </label>
+                <span className="rounded-full bg-[#fff0d6] px-2.5 py-0.5 text-xs font-bold text-[#7a1f2b]">
+                  {LANG_NAMES[language]}
                 </span>
-              )}
-            </div>
-            <input
-              id="due-date"
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="mt-1 min-h-[44px] w-full rounded-xl border border-[#eadbc8] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
-            />
-          </div>
-        </section>
+              </div>
+              <textarea
+                id="transcript"
+                rows={4}
+                value={transcript}
+                onChange={(e) => setTranscript(e.target.value)}
+                className="mt-3 w-full rounded-xl border border-[#f1e3cc] bg-[#fff8ec] p-3 text-sm leading-relaxed text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
+              />
+              <div className="mt-3 flex items-center justify-between">
+                <span className="inline-flex items-center rounded-full bg-[#fff8ec] px-2.5 py-1 text-[11px] font-semibold text-[#7a6558] ring-1 ring-[#f1e3cc]">
+                  Transcribed by Sarvam
+                </span>
+              </div>
+            </section>
+          </aside>
 
-        {/* Editable Items */}
-        <section className="flex flex-col gap-3 rounded-2xl border border-[#eadbc8] bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-extrabold text-[#7a1f2b] uppercase">Items</h2>
-            <button
-              type="button"
-              onClick={addRow}
-              className="min-h-[38px] rounded-xl bg-[#fff0d6] px-3 py-1.5 text-xs font-bold text-[#7a1f2b] hover:bg-[#ffe3b3]"
-            >
-              + Add Row
-            </button>
-          </div>
+          {/* Right column (3/5): Customer, Items, Totals */}
+          <div className="flex flex-col gap-5 lg:col-span-3">
+            {/* Customer Details & Due Date */}
+            <section className="bb-card grid grid-cols-1 gap-3.5 p-4 sm:grid-cols-2 sm:p-5">
+              <div>
+                <label htmlFor="customer-name" className="block text-xs font-bold text-[#4a3328]">
+                  Customer Name *
+                </label>
+                <input
+                  id="customer-name"
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Ramesh"
+                  aria-invalid={showIssues && !customerName.trim()}
+                  className={`mt-1 min-h-[44px] w-full rounded-xl border px-3 text-base text-[#2a1a14] focus:outline-none ${
+                    showIssues && !customerName.trim()
+                      ? 'border-red-500 bg-red-50'
+                      : 'border-[#f1e3cc] bg-[#fff8ec] focus:border-[#7a1f2b]'
+                  }`}
+                />
+              </div>
 
-          {missingRateCount > 0 && (
-            <div
-              role="alert"
-              className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-xs font-semibold text-red-800"
-            >
-              {missingRateCount} item{missingRateCount > 1 ? 's' : ''} missing rate — enter rate in
-              the red box to save.
-            </div>
-          )}
+              <div>
+                <label htmlFor="customer-phone" className="block text-xs font-bold text-[#4a3328]">
+                  Phone (optional)
+                </label>
+                <input
+                  id="customer-phone"
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="e.g. 919845012345"
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-[#f1e3cc] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
+                />
+              </div>
 
-          <div className="flex flex-col gap-3">
-            {rows.map((row, idx) => {
-              const qty = parsePositiveNum(row.quantity) ?? 0;
-              const rate = parsePositiveNum(row.rate);
-              const rateMissing = rate === null;
-              const amount = rate !== null ? lineAmount(qty, rate) : 0;
+              <div>
+                <label htmlFor="advance-paid" className="block text-xs font-bold text-[#4a3328]">
+                  Advance Paid (₹)
+                </label>
+                <input
+                  id="advance-paid"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={advanceStr}
+                  onChange={(e) => setAdvanceStr(e.target.value)}
+                  aria-invalid={total > 0 && advanceVal > total}
+                  className={`mt-1 min-h-[44px] w-full rounded-xl border px-3 text-base text-[#2a1a14] focus:outline-none ${
+                    total > 0 && advanceVal > total
+                      ? 'border-red-500 bg-red-50'
+                      : 'border-[#f1e3cc] bg-[#fff8ec] focus:border-[#7a1f2b]'
+                  }`}
+                />
+              </div>
 
-              return (
-                <div
-                  key={row.key}
-                  className="rounded-xl border border-[#eadbc8] bg-[#fff8ec]/60 p-3"
+              <div>
+                <label htmlFor="due-date" className="block text-xs font-bold text-[#4a3328]">
+                  Due Date
+                </label>
+                <input
+                  id="due-date"
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="mt-1 min-h-[44px] w-full rounded-xl border border-[#f1e3cc] bg-[#fff8ec] px-3 text-base text-[#2a1a14] focus:border-[#7a1f2b] focus:outline-none"
+                />
+                {dueDateText && (
+                  <p className="mt-1.5 inline-block rounded-full bg-[#fff0d6] px-2.5 py-0.5 text-[11px] font-semibold text-[#7a1f2b]">
+                    Heard: {dueDateText}
+                    {parsedHeardIso ? ` → ${formatShortDate(parsedHeardIso)}` : ''}
+                  </p>
+                )}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDueDate(addDaysIso(new Date(), 1))}
+                    className="min-h-[34px] rounded-full border border-[#f1e3cc] bg-white px-2.5 text-xs font-semibold text-[#4a3328] hover:border-[#e8892b]"
+                  >
+                    Tomorrow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDueDate(addDaysIso(new Date(), 3))}
+                    className="min-h-[34px] rounded-full border border-[#f1e3cc] bg-white px-2.5 text-xs font-semibold text-[#4a3328] hover:border-[#e8892b]"
+                  >
+                    In 3 days
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDueDate(addDaysIso(new Date(), 7))}
+                    className="min-h-[34px] rounded-full border border-[#f1e3cc] bg-white px-2.5 text-xs font-semibold text-[#4a3328] hover:border-[#e8892b]"
+                  >
+                    Next week
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            {/* Items Section */}
+            <section className="bb-card flex flex-col gap-3 p-4 sm:p-5">
+              <div className="flex items-center justify-between">
+                <h2 className="font-heading text-base font-extrabold text-[#7a1f2b]">Items</h2>
+                <button
+                  type="button"
+                  onClick={addRow}
+                  className="min-h-[44px] rounded-xl bg-[#fff0d6] px-3.5 py-2 text-xs font-bold text-[#7a1f2b] hover:bg-[#ffe3b3]"
                 >
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#6e584f]">Item #{idx + 1}</span>
-                    {rows.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeRow(row.key)}
-                        className="text-xs font-bold text-red-700 underline"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
+                  + Add Row
+                </button>
+              </div>
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#6e584f]">
-                        Original Name
-                      </label>
-                      <input
-                        type="text"
-                        value={row.name_original}
-                        onChange={(e) => updateRow(row.key, { name_original: e.target.value })}
-                        placeholder="e.g. ಮೈಸೂರು ಪಾಕ್"
-                        className="mt-0.5 min-h-[40px] w-full rounded-lg border border-[#eadbc8] bg-white px-2.5 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#6e584f]">
-                        English Name
-                      </label>
-                      <input
-                        type="text"
-                        value={row.name_english}
-                        onChange={(e) => updateRow(row.key, { name_english: e.target.value })}
-                        placeholder="e.g. Mysore Pak"
-                        className="mt-0.5 min-h-[40px] w-full rounded-lg border border-[#eadbc8] bg-white px-2.5 text-sm"
-                      />
-                    </div>
-                  </div>
+              {/* Desktop Table (>=1024px) */}
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-[#f1e3cc] text-[11px] font-bold text-[#7a6558] uppercase">
+                      <th className="py-2 pr-2">Original</th>
+                      <th className="px-1.5 py-2">English</th>
+                      <th className="w-20 px-1.5 py-2">Qty</th>
+                      <th className="w-24 px-1.5 py-2">Unit</th>
+                      <th className="w-24 px-1.5 py-2">Rate (₹)</th>
+                      <th className="w-24 px-1.5 py-2 text-right">Amount</th>
+                      <th className="w-10 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#f6ebd9]">
+                    {rows.map((row) => {
+                      const qty = parsePositiveNum(row.quantity) ?? 0;
+                      const rate = parsePositiveNum(row.rate);
+                      const rateMissing = rate === null;
+                      const amount = rate !== null ? lineAmount(qty, rate) : 0;
 
-                  <div className="mt-2 grid grid-cols-4 gap-2">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#6e584f]">Qty</label>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="any"
-                        value={row.quantity}
-                        onChange={(e) => updateRow(row.key, { quantity: e.target.value })}
-                        className="mt-0.5 min-h-[40px] w-full rounded-lg border border-[#eadbc8] bg-white px-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#6e584f]">Unit</label>
-                      <input
-                        type="text"
-                        value={row.unit}
-                        onChange={(e) => updateRow(row.key, { unit: e.target.value })}
-                        placeholder="kg"
-                        className="mt-0.5 min-h-[40px] w-full rounded-lg border border-[#eadbc8] bg-white px-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        className={`block text-[11px] font-semibold ${
-                          rateMissing ? 'text-red-700' : 'text-[#6e584f]'
-                        }`}
-                      >
-                        Rate (₹) *
-                      </label>
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="any"
-                        value={row.rate}
-                        onChange={(e) => updateRow(row.key, { rate: e.target.value })}
-                        placeholder="Rate"
-                        aria-invalid={rateMissing}
-                        className={`mt-0.5 min-h-[40px] w-full rounded-lg border-2 px-2 text-sm font-bold focus:outline-none ${
-                          rateMissing
-                            ? 'border-red-500 bg-red-50 text-red-900 placeholder:text-red-400'
-                            : 'border-[#eadbc8] bg-white text-[#2a1a14] focus:border-[#7a1f2b]'
-                        }`}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#6e584f]">
-                        Amount
-                      </label>
-                      <div className="mt-0.5 flex min-h-[40px] items-center justify-end rounded-lg bg-[#f6ebd9] px-2 text-sm font-bold text-[#2a1a14]">
-                        {rate !== null ? inr(amount) : '—'}
+                      return (
+                        <tr key={row.key}>
+                          <td className="py-2 pr-2">
+                            <input
+                              id={`name-desktop-${row.key}`}
+                              type="text"
+                              value={row.name_original}
+                              onChange={(e) => updateRow(row.key, { name_original: e.target.value })}
+                              placeholder="Original"
+                              className="min-h-[40px] w-full rounded-lg border border-[#f1e3cc] bg-[#fff8ec] px-2.5 text-sm"
+                            />
+                          </td>
+                          <td className="px-1.5 py-2">
+                            <input
+                              type="text"
+                              value={row.name_english}
+                              onChange={(e) => updateRow(row.key, { name_english: e.target.value })}
+                              placeholder="English"
+                              className="min-h-[40px] w-full rounded-lg border border-[#f1e3cc] bg-[#fff8ec] px-2.5 text-sm"
+                            />
+                          </td>
+                          <td className="px-1.5 py-2">
+                            <input
+                              id={`qty-desktop-${row.key}`}
+                              type="number"
+                              min="0.01"
+                              step="any"
+                              value={row.quantity}
+                              onChange={(e) => updateRow(row.key, { quantity: e.target.value })}
+                              className="min-h-[40px] w-full rounded-lg border border-[#f1e3cc] bg-[#fff8ec] px-2 text-sm"
+                            />
+                          </td>
+                          <td className="px-1.5 py-2">
+                            <input
+                              type="text"
+                              list="unit-options"
+                              value={row.unit}
+                              onChange={(e) => updateRow(row.key, { unit: e.target.value })}
+                              placeholder="kg"
+                              className="min-h-[40px] w-full rounded-lg border border-[#f1e3cc] bg-[#fff8ec] px-2 text-sm"
+                            />
+                          </td>
+                          <td className="px-1.5 py-2">
+                            <input
+                              id={`rate-desktop-${row.key}`}
+                              type="number"
+                              min="0.01"
+                              step="any"
+                              value={row.rate}
+                              onChange={(e) => updateRow(row.key, { rate: e.target.value })}
+                              placeholder="Rate"
+                              aria-invalid={rateMissing}
+                              className={`min-h-[40px] w-full rounded-lg border-2 px-2 text-sm font-bold focus:outline-none ${
+                                rateMissing
+                                  ? 'border-red-500 bg-red-50 text-red-900 placeholder:text-red-400'
+                                  : 'border-[#f1e3cc] bg-[#fff8ec] text-[#2a1a14] focus:border-[#7a1f2b]'
+                              }`}
+                            />
+                          </td>
+                          <td className="px-1.5 py-2 text-right font-bold text-[#2a1a14]">
+                            {rate !== null ? inr(amount) : '—'}
+                          </td>
+                          <td className="py-2 pl-1 text-right">
+                            {rows.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => removeRow(row.key)}
+                                aria-label="Remove item"
+                                className="min-h-[36px] rounded-lg px-2 text-xs font-bold text-red-700 hover:bg-red-50"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Cards (<1024px) */}
+              <div className="flex flex-col gap-3 lg:hidden">
+                {rows.map((row, idx) => {
+                  const qty = parsePositiveNum(row.quantity) ?? 0;
+                  const rate = parsePositiveNum(row.rate);
+                  const rateMissing = rate === null;
+                  const amount = rate !== null ? lineAmount(qty, rate) : 0;
+
+                  return (
+                    <div
+                      key={row.key}
+                      className="rounded-xl border border-[#f1e3cc] bg-[#fff8ec]/60 p-3"
+                    >
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#7a6558]">Item #{idx + 1}</span>
+                        {rows.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeRow(row.key)}
+                            className="min-h-[36px] px-2 text-xs font-bold text-red-700 underline"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#4a3328]">
+                            Original Name
+                          </label>
+                          <input
+                            id={`name-mobile-${row.key}`}
+                            type="text"
+                            value={row.name_original}
+                            onChange={(e) => updateRow(row.key, { name_original: e.target.value })}
+                            placeholder="e.g. ಮೈಸೂರು ಪಾಕ್"
+                            className="mt-0.5 min-h-[42px] w-full rounded-lg border border-[#f1e3cc] bg-white px-2.5 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#4a3328]">
+                            English Name
+                          </label>
+                          <input
+                            type="text"
+                            value={row.name_english}
+                            onChange={(e) => updateRow(row.key, { name_english: e.target.value })}
+                            placeholder="e.g. Mysore Pak"
+                            className="mt-0.5 min-h-[42px] w-full rounded-lg border border-[#f1e3cc] bg-white px-2.5 text-sm"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-2 grid grid-cols-4 gap-2">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#4a3328]">Qty</label>
+                          <input
+                            id={`qty-mobile-${row.key}`}
+                            type="number"
+                            min="0.01"
+                            step="any"
+                            value={row.quantity}
+                            onChange={(e) => updateRow(row.key, { quantity: e.target.value })}
+                            className="mt-0.5 min-h-[42px] w-full rounded-lg border border-[#f1e3cc] bg-white px-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#4a3328]">Unit</label>
+                          <input
+                            type="text"
+                            list="unit-options"
+                            value={row.unit}
+                            onChange={(e) => updateRow(row.key, { unit: e.target.value })}
+                            placeholder="kg"
+                            className="mt-0.5 min-h-[42px] w-full rounded-lg border border-[#f1e3cc] bg-white px-2 text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            className={`block text-[11px] font-semibold ${
+                              rateMissing ? 'text-red-700' : 'text-[#4a3328]'
+                            }`}
+                          >
+                            Rate (₹) *
+                          </label>
+                          <input
+                            id={`rate-mobile-${row.key}`}
+                            type="number"
+                            min="0.01"
+                            step="any"
+                            value={row.rate}
+                            onChange={(e) => updateRow(row.key, { rate: e.target.value })}
+                            placeholder="Rate"
+                            aria-invalid={rateMissing}
+                            className={`mt-0.5 min-h-[42px] w-full rounded-lg border-2 px-2 text-sm font-bold focus:outline-none ${
+                              rateMissing
+                                ? 'border-red-500 bg-red-50 text-red-900 placeholder:text-red-400'
+                                : 'border-[#f1e3cc] bg-white text-[#2a1a14] focus:border-[#7a1f2b]'
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-[#4a3328]">
+                            Amount
+                          </label>
+                          <div className="mt-0.5 flex min-h-[42px] items-center justify-end rounded-lg bg-[#f6ebd9] px-2 text-sm font-bold text-[#2a1a14]">
+                            {rate !== null ? inr(amount) : '—'}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
+                  );
+                })}
+              </div>
+            </section>
 
-        {/* Live Totals */}
-        <section className="rounded-2xl border-2 border-[#7a1f2b] bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between text-sm text-[#6e584f]">
-            <span>Total</span>
-            <span className="text-base font-bold text-[#2a1a14]">{inr(total)}</span>
-          </div>
-          <div className="mt-1 flex items-center justify-between text-sm text-[#6e584f]">
-            <span>Advance Paid</span>
-            <span className="font-semibold text-[#2a1a14]">− {inr(advanceVal)}</span>
-          </div>
-          <div className="mt-2 flex items-center justify-between border-t border-[#eadbc8] pt-2">
-            <span className="text-base font-extrabold text-[#7a1f2b]">Balance Due</span>
-            <span className="text-2xl font-extrabold text-[#7a1f2b]">{inr(balance)}</span>
-          </div>
-        </section>
+            {/* Larger & clearer Totals Card */}
+            <section className="bb-card border-2 border-[#7a1f2b] p-5">
+              <div className="flex items-center justify-between text-base text-[#4a3328]">
+                <span className="font-semibold">Total</span>
+                <span className="text-xl font-extrabold text-[#2a1a14]">{inr(total)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-base text-[#4a3328]">
+                <span className="font-semibold">Advance</span>
+                <span className="text-lg font-bold text-[#2a1a14]">− {inr(advanceVal)}</span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between border-t-2 border-[#f1e3cc] pt-3">
+                <span className="font-heading text-lg font-extrabold text-[#7a1f2b]">
+                  Balance due
+                </span>
+                <span className="font-heading text-3xl font-black text-[#7a1f2b]">
+                  {inr(balance)}
+                </span>
+              </div>
+            </section>
 
-        {saveError && (
-          <div
-            role="alert"
-            className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800"
-          >
-            {saveError}
-          </div>
-        )}
+            {saveError && (
+              <div
+                role="alert"
+                className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm font-semibold text-red-800"
+              >
+                {saveError}
+              </div>
+            )}
 
-        {/* Action buttons */}
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <button
-            type="button"
-            disabled={saving || missingRateCount > 0}
-            onClick={handleSave}
-            className="min-h-[52px] flex-1 rounded-2xl bg-[#7a1f2b] px-5 py-3 text-base font-extrabold text-[#fff8ec] shadow-sm transition hover:bg-[#5b151e] disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {saving ? 'Saving Bill…' : 'Save & Share'}
-          </button>
+            {/* Desktop Save & Share + blocking reasons directly beneath */}
+            <div className="hidden flex-col gap-2 lg:flex">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={handleSave}
+                  className="min-h-[52px] flex-1 rounded-2xl bg-[#7a1f2b] px-5 py-3 text-base font-extrabold text-white shadow-sm transition hover:bg-[#5b151e] active:scale-[0.98] disabled:opacity-60"
+                >
+                  {saving ? 'Saving Bill…' : 'Save & Share'}
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={handleReRecord}
+                  className="min-h-[52px] rounded-2xl border border-[#f1e3cc] bg-white px-5 py-3 text-base font-bold text-[#7a1f2b] transition hover:border-[#e8892b]"
+                >
+                  Re-record
+                </button>
+              </div>
+              {validationIssues.length > 0 && (
+                <ul className="space-y-0.5 text-xs font-semibold text-red-700">
+                  {validationIssues.map((issue) => (
+                    <li key={issue.fieldId + issue.message}>• {issue.message}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* Mobile sticky bottom bar above bottom tab bar (<640px) or at bottom (640-1023px) */}
+      <div className="fixed inset-x-0 bottom-[61px] z-20 border-t border-[#f1e3cc] bg-white/95 px-4 py-2.5 shadow-[0_-6px_20px_rgba(42,26,20,0.08)] backdrop-blur-sm sm:bottom-0 sm:pb-[calc(0.625rem+env(safe-area-inset-bottom))] lg:hidden">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+          <div className="leading-tight">
+            <p className="text-[11px] font-semibold text-[#7a6558]">Total {inr(total)}</p>
+            <p className="text-base font-extrabold text-[#7a1f2b]">Due {inr(balance)}</p>
+          </div>
           <button
             type="button"
             disabled={saving}
-            onClick={handleReRecord}
-            className="min-h-[52px] rounded-2xl border border-[#eadbc8] bg-white px-5 py-3 text-base font-bold text-[#7a1f2b] transition hover:border-[#e8892b]"
+            onClick={handleSave}
+            className="min-h-[46px] rounded-2xl bg-[#7a1f2b] px-5 py-2.5 text-sm font-extrabold text-white shadow-sm transition hover:bg-[#5b151e] active:scale-[0.98] disabled:opacity-60"
           >
-            Re-record
+            {saving ? 'Saving…' : 'Save & Share'}
           </button>
         </div>
-      </main>
+        {validationIssues.length > 0 && (
+          <p className="mx-auto mt-1 max-w-5xl truncate text-[11px] font-semibold text-red-700">
+            {validationIssues[0].message}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
