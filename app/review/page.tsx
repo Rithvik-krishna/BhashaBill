@@ -8,7 +8,7 @@ import { saveOrder } from '@/lib/client/api';
 import { clearDraft, loadDraft } from '@/lib/client/draft';
 import type { BillItemInput, Lang, SaveOrderResponse } from '@/lib/contract';
 import { inr, lineAmount, round2, totals } from '@/lib/money';
-import { VENDOR } from '@/lib/vendor';
+import { DEMO_SHOP } from '@/lib/vendor';
 
 interface EditableRow {
   key: string;
@@ -156,6 +156,8 @@ export default function ReviewBillPage() {
     setSaving(true);
     try {
       const res = await saveOrder({
+        vendor: DEMO_SHOP.profile,
+        vendor_key: DEMO_SHOP.vendor_key,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim() || null,
         language,
@@ -192,7 +194,7 @@ export default function ReviewBillPage() {
         ? window.location.origin
         : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
     const fullUrl = `${origin}${publicPath}`;
-    const waText = `Namaste ${customerName.trim()}, here is your bill from ${VENDOR.name}: Total ${inr(total)}, Balance due ${inr(balance)}. View bill: ${fullUrl}`;
+    const waText = `Namaste ${customerName.trim()}, here is your bill from ${DEMO_SHOP.profile.name}: Total ${inr(total)}, Balance due ${inr(balance)}. View bill: ${fullUrl}`;
     const phoneDigits = customerPhone.replace(/\D/g, '');
     const waUrl = phoneDigits
       ? `https://wa.me/${phoneDigits}?text=${encodeURIComponent(waText)}`

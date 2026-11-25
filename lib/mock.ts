@@ -11,7 +11,7 @@ import type {
   TtsResponse,
 } from './contract';
 import { lineAmount, round2, totals } from './money';
-import { VENDOR } from './vendor';
+import { DEMO_SHOP } from './vendor';
 
 export const MOCK_TRANSCRIBE_KANNADA: TranscribeResponse = {
   ok: true,
@@ -75,7 +75,7 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
         amount: 1800,
       },
     ],
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   },
   {
     id: 'ord-2',
@@ -112,7 +112,7 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
         amount: 500,
       },
     ],
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   },
   {
     id: 'ord-3',
@@ -149,7 +149,7 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
         amount: 800,
       },
     ],
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   },
   {
     id: 'ord-4',
@@ -186,7 +186,7 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
         amount: 400,
       },
     ],
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   },
   {
     id: 'ord-5',
@@ -223,7 +223,7 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
         amount: 600,
       },
     ],
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   },
 ];
 
@@ -317,7 +317,7 @@ export function mockSaveOrder(payload: SaveOrderRequest): SaveOrderResponse {
     transcript: payload.transcript,
     language: payload.language,
     items,
-    vendor: { name: VENDOR.name, phone: VENDOR.phone },
+    vendor: { ...DEMO_SHOP.profile },
   });
 
   return { id, slug };
@@ -353,9 +353,9 @@ export function mockSendReminder(id: string): ReminderResponse {
   const dueStr = order.due_date ?? 'soon';
   const message =
     variant === 'firm'
-      ? `Namaste ${order.customer_name}, reminder from ${VENDOR.name}: balance of Rs ${order.balance} was due on ${dueStr}. Please settle at your earliest.`
-      : `Namaste ${order.customer_name}! Gentle reminder from ${VENDOR.name}: Rs ${order.balance} is due on ${dueStr}. Thank you!`;
-  const digits = (order.customer_phone ?? VENDOR.phone).replace(/\D/g, '');
+      ? `Namaste ${order.customer_name}, reminder from ${DEMO_SHOP.profile.name}: balance of Rs ${order.balance} was due on ${dueStr}. Please settle at your earliest.`
+      : `Namaste ${order.customer_name}! Gentle reminder from ${DEMO_SHOP.profile.name}: Rs ${order.balance} is due on ${dueStr}. Thank you!`;
+  const digits = (order.customer_phone ?? DEMO_SHOP.profile.phone).replace(/\D/g, '');
   const wa_url = `https://wa.me/${digits}?text=${encodeURIComponent(message)}`;
   return { variant, message, wa_url };
 }

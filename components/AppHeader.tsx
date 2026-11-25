@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { VENDOR } from '@/lib/vendor';
+import { DEMO_SHOP } from '@/lib/vendor';
 
 function LogoMark() {
   return (
@@ -47,7 +47,7 @@ export function AppHeader() {
               <span className="font-heading text-xl font-extrabold tracking-tight text-[#fff8ec]">
                 BhashaBill
               </span>
-              <span className="text-xs font-medium text-[#ffdca8]">{VENDOR.name}</span>
+              <span className="text-xs font-medium text-[#ffdca8]">{DEMO_SHOP.profile.name}</span>
             </div>
           </Link>
 

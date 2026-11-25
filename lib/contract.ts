@@ -3,6 +3,12 @@
 
 export type Lang = 'kn' | 'hi' | 'ta' | 'en';
 
+export interface VendorProfile {
+  name: string;
+  phone: string;
+  city: string | null;
+}
+
 export interface ExtractedItem {
   name_original: string;
   name_english: string;
@@ -41,6 +47,8 @@ export interface BillItemInput {
 
 // POST /api/orders   (server recomputes every amount/total/balance; client totals are ignored)
 export interface SaveOrderRequest {
+  vendor: VendorProfile;
+  vendor_key: string;
   customer_name: string;
   customer_phone: string | null;
   language: Lang;
@@ -75,13 +83,13 @@ export interface OrderItem extends BillItemInput {
   amount: number; // quantity * rate, computed server-side
 }
 
-// GET /api/orders -> OrderSummary[]
+// GET /api/orders -> OrderSummary[]  (REQUIRES ?vendor_key=; returns only that shop's orders; 400 if missing.)
 // GET /api/orders/[slug] -> OrderDetail
 export interface OrderDetail extends OrderSummary {
   transcript: string;
   language: Lang;
   items: OrderItem[];
-  vendor: { name: string; phone: string };
+  vendor: VendorProfile;
 }
 
 // POST /api/orders/[id]/payments -> OrderSummary
