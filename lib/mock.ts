@@ -228,8 +228,10 @@ export const INITIAL_MOCK_ORDERS: OrderDetail[] = [
 ];
 
 // In-memory mock store for the current runtime (seeded with the 5 initial orders)
-const mockOrders: OrderDetail[] = INITIAL_MOCK_ORDERS.map((o) => ({
+type MockOrderRecord = OrderDetail & { vendor_key: string };
+const mockOrders: MockOrderRecord[] = INITIAL_MOCK_ORDERS.map((o) => ({
   ...o,
+  vendor_key: DEMO_SHOP.vendor_key,
   items: o.items.map((item) => ({ ...item })),
 }));
 
@@ -304,6 +306,7 @@ export function mockSaveOrder(payload: SaveOrderRequest): SaveOrderResponse {
   mockOrders.unshift({
     id,
     slug,
+    vendor_key: payload.vendor_key,
     customer_name: payload.customer_name,
     customer_phone: payload.customer_phone,
     total,
@@ -323,8 +326,8 @@ export function mockSaveOrder(payload: SaveOrderRequest): SaveOrderResponse {
   return { id, slug };
 }
 
-export function mockListOrders(): OrderSummary[] {
-  return mockOrders.map(toSummary);
+export function mockListOrders(vendorKey: string): OrderSummary[] {
+  return mockOrders.filter((o) => o.vendor_key === vendorKey).map(toSummary);
 }
 
 export function mockGetOrderBySlug(slug: string): OrderDetail | null {

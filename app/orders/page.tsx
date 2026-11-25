@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AppHeader } from '@/components/AppHeader';
 import { listOrders, recordPayment, sendReminder } from '@/lib/client/api';
+import { useShop } from '@/lib/client/shop';
 import type { OrderSummary, ReminderResponse } from '@/lib/contract';
 import { inr, round2 } from '@/lib/money';
 
@@ -37,6 +38,7 @@ function StatusChip({ order }: { order: OrderSummary }) {
 }
 
 export default function OrdersDashboardPage() {
+  const { shop, ready: shopReady } = useShop();
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,20 +48,21 @@ export default function OrdersDashboardPage() {
   const [reminderInfo, setReminderInfo] = useState<Record<string, ReminderResponse>>({});
 
   const refreshOrders = useCallback(async () => {
+    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
     try {
       setError(null);
-      const data = await listOrders();
+      const data = await listOrders(shop.vendor_key);
       setOrders(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load orders.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [shop]);
 
   useEffect(() => {
-    refreshOrders();
-  }, [refreshOrders]);
+    if (shopReady) refreshOrders();
+  }, [shopReady, refreshOrders]);
 
   const totalOutstanding = round2(
     orders.reduce((sum, o) => (o.status === 'pending' ? sum + o.balance : sum), 0),
@@ -74,6 +77,7 @@ export default function OrdersDashboardPage() {
     }
     setError(null);
     setBusyId(order.id);
+    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
     try {
       await recordPayment(order.id, { amount });
       setPaymentInputs((prev) => ({ ...prev, [order.id]: '' }));
@@ -88,6 +92,7 @@ export default function OrdersDashboardPage() {
   async function handleReminder(order: OrderSummary) {
     setError(null);
     setBusyId(order.id);
+    if (!shop) { setBusyId(null); setOrders([]); setLoading(false); return; }
     try {
       const res = await sendReminder(order.id);
       setReminderInfo((prev) => ({ ...prev, [order.id]: res }));
@@ -140,7 +145,7 @@ export default function OrdersDashboardPage() {
               href="/"
               className="mt-4 inline-flex min-h-[44px] items-center rounded-xl bg-[#7a1f2b] px-5 py-2 text-sm font-bold text-[#fff8ec]"
             >
-              Take First Order
+              Record your first order
             </Link>
           </div>
         ) : (

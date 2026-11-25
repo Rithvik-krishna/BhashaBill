@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { AppHeader } from '@/components/AppHeader';
 import { listOrders, transcribeAudio, transcribeText } from '@/lib/client/api';
 import { saveDraft } from '@/lib/client/draft';
+import { useShop } from '@/lib/client/shop';
 import type { Lang } from '@/lib/contract';
 import { inr, round2 } from '@/lib/money';
 
@@ -50,6 +51,7 @@ function formatTimer(seconds: number): string {
 
 export default function NewOrderPage() {
   const router = useRouter();
+  const { shop, ready: shopReady } = useShop();
   const [language, setLanguage] = useState<Lang>('kn');
   const [state, setState] = useState<RecorderState>('idle');
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -70,8 +72,12 @@ export default function NewOrderPage() {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Restore last selected language from localStorage
+  // Default language from shop profile when loaded (or localStorage fallback)
   useEffect(() => {
+    if (shop) {
+      setLanguage(shop.default_language);
+      return;
+    }
     try {
       const saved = localStorage.getItem(LANG_STORAGE_KEY) as Lang | null;
       if (saved && LANGUAGES.some((l) => l.code === saved)) {
@@ -80,14 +86,21 @@ export default function NewOrderPage() {
     } catch {
       // ignore storage access issues
     }
-  }, []);
+  }, [shop]);
 
-  // Fetch outstanding summary strip once on mount; hide silently on error or empty
+  // Fetch outstanding summary strip once shop is ready; hide silently on error or empty
   useEffect(() => {
+    if (!shopReady || !shop) {
+      setSummaryStrip(null);
+      return;
+    }
     let active = true;
-    listOrders()
+    listOrders(shop.vendor_key)
       .then((orders) => {
-        if (!active || !orders || orders.length === 0) return;
+        if (!active || !orders || orders.length === 0) {
+          if (active) setSummaryStrip(null);
+          return;
+        }
         const pendingOrders = orders.filter((o) => o.status === 'pending');
         const outstanding = round2(pendingOrders.reduce((sum, o) => sum + o.balance, 0));
         const overdue = pendingOrders.filter((o) => o.overdue).length;
@@ -98,12 +111,12 @@ export default function NewOrderPage() {
         });
       })
       .catch(() => {
-        // hide silently
+        if (active) setSummaryStrip(null);
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [shopReady, shop]);
 
   // Cycle processing status text every ~2s while processing
   useEffect(() => {

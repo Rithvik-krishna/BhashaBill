@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { DEMO_SHOP } from '@/lib/vendor';
+import { ShopSetup } from '@/components/ShopSetup';
+import { useShop } from '@/lib/client/shop';
 
 function LogoMark() {
   return (
@@ -29,30 +31,56 @@ function LogoMark() {
   );
 }
 
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'BB';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+}
+
 export function AppHeader() {
   const pathname = usePathname();
+  const { shop, ready } = useShop();
+  const [editOpen, setEditOpen] = useState(false);
+
   const isHome = pathname === '/';
   const isOrders = pathname.startsWith('/orders');
 
   return (
     <>
       <header className="no-print bb-header-pattern sticky top-0 z-20 border-b border-[#5b151e] text-[#fff8ec] shadow-sm">
-        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
-          <Link
-            href="/"
-            className="flex min-h-[44px] items-center gap-2.5 rounded-xl pr-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffdca8]"
-          >
-            <LogoMark />
-            <div className="flex flex-col leading-tight">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-2.5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Link
+              href="/"
+              className="flex min-h-[44px] items-center gap-2 rounded-xl pr-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffdca8]"
+            >
+              <LogoMark />
               <span className="font-heading text-xl font-extrabold tracking-tight text-[#fff8ec]">
                 BhashaBill
               </span>
-              <span className="text-xs font-medium text-[#ffdca8]">{DEMO_SHOP.profile.name}</span>
-            </div>
-          </Link>
+            </Link>
+
+            {ready && shop && (
+              <button
+                type="button"
+                onClick={() => setEditOpen(true)}
+                aria-label={`Edit shop profile: ${shop.name}`}
+                className="flex min-h-[40px] min-w-0 items-center gap-2 rounded-full bg-[#5b151e] px-2.5 py-1 text-left transition hover:bg-[#6a1924] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffdca8]"
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#e8892b] text-xs font-extrabold text-[#2a1a14]">
+                  {getInitials(shop.name)}
+                </span>
+                <span className="min-w-0 truncate text-xs font-semibold text-[#ffdca8]">
+                  {shop.name}
+                  {shop.city ? ` · ${shop.city}` : ''}
+                </span>
+              </button>
+            )}
+          </div>
 
           {/* Desktop / Tablet header nav */}
-          <nav className="hidden items-center gap-2 sm:flex" aria-label="Primary">
+          <nav className="hidden shrink-0 items-center gap-2 sm:flex" aria-label="Primary">
             <Link
               href="/"
               className={`flex min-h-[44px] items-center rounded-xl px-4 py-2 text-sm font-bold transition active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ffdca8] ${
@@ -80,7 +108,7 @@ export function AppHeader() {
       {/* Mobile fixed bottom tab bar (<640px) */}
       <nav
         aria-label="Mobile navigation"
-        className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-[#f1e3cc] bg-white/95 backdrop-blur-sm pb-[env(safe-area-inset-bottom)] sm:hidden"
+        className="no-print fixed inset-x-0 bottom-0 z-30 border-t border-[#f1e3cc] bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm sm:hidden"
       >
         <div className="mx-auto grid max-w-5xl grid-cols-2 px-4 py-1.5">
           <Link
@@ -135,6 +163,17 @@ export function AppHeader() {
           </Link>
         </div>
       </nav>
+
+      {/* First-visit onboarding sheet (shown on /, /review, /orders; never on /b/**) */}
+      <ShopSetup open={ready && !shop} mode="onboarding" />
+
+      {/* Edit shop sheet */}
+      <ShopSetup
+        open={editOpen}
+        mode="edit"
+        initialShop={shop}
+        onClose={() => setEditOpen(false)}
+      />
     </>
   );
 }

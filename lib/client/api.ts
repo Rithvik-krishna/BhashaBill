@@ -99,11 +99,11 @@ export async function saveOrder(payload: SaveOrderRequest): Promise<SaveOrderRes
   return readJson<SaveOrderResponse>(res);
 }
 
-export async function listOrders(): Promise<OrderSummary[]> {
+export async function listOrders(vendorKey: string): Promise<OrderSummary[]> {
   if (USE_MOCKS) {
-    return mockListOrders();
+    return mockListOrders(vendorKey);
   }
-  const res = await fetch(`${apiBase()}/api/orders`, { cache: 'no-store' });
+  const res = await fetch(`${apiBase()}/api/orders?vendor_key=${encodeURIComponent(vendorKey)}`, { cache: 'no-store' });
   return readJson<OrderSummary[]>(res);
 }
 

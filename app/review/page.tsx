@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { AppHeader } from '@/components/AppHeader';
 import { saveOrder } from '@/lib/client/api';
 import { clearDraft, loadDraft } from '@/lib/client/draft';
+import { useShop } from '@/lib/client/shop';
 import type { BillItemInput, Lang, SaveOrderResponse } from '@/lib/contract';
 import { inr, lineAmount, round2, totals } from '@/lib/money';
 import { DEMO_SHOP } from '@/lib/vendor';
@@ -39,6 +40,7 @@ function parseNonNegativeNum(v: string): number {
 
 export default function ReviewBillPage() {
   const router = useRouter();
+  const { shop } = useShop();
   const [ready, setReady] = useState(false);
   const [language, setLanguage] = useState<Lang>('kn');
   const [transcript, setTranscript] = useState('');
@@ -156,8 +158,8 @@ export default function ReviewBillPage() {
     setSaving(true);
     try {
       const res = await saveOrder({
-        vendor: DEMO_SHOP.profile,
-        vendor_key: DEMO_SHOP.vendor_key,
+        vendor: shop ? { name: shop.name, phone: shop.phone, city: shop.city } : DEMO_SHOP.profile,
+        vendor_key: shop ? shop.vendor_key : DEMO_SHOP.vendor_key,
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim() || null,
         language,
@@ -194,7 +196,8 @@ export default function ReviewBillPage() {
         ? window.location.origin
         : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
     const fullUrl = `${origin}${publicPath}`;
-    const waText = `Namaste ${customerName.trim()}, here is your bill from ${DEMO_SHOP.profile.name}: Total ${inr(total)}, Balance due ${inr(balance)}. View bill: ${fullUrl}`;
+    const shopName = shop?.name ?? DEMO_SHOP.profile.name;
+    const waText = `Namaste ${customerName.trim()}, here is your bill from ${shopName}: Total ${inr(total)}, Balance due ${inr(balance)}. View bill: ${fullUrl}`;
     const phoneDigits = customerPhone.replace(/\D/g, '');
     const waUrl = phoneDigits
       ? `https://wa.me/${phoneDigits}?text=${encodeURIComponent(waText)}`
