@@ -1,7 +1,7 @@
 import { DefaultFlag, Flagsmith } from 'flagsmith-nodejs';
 import type { FlagsResponse, Lang } from '@/lib/contract';
 import { inr } from '@/lib/money';
-import { VENDOR } from '@/lib/vendor';
+import { DEMO_SHOP } from '@/lib/vendor';
 
 export type ReminderVariant = 'polite' | 'firm';
 
@@ -17,8 +17,8 @@ interface ReminderTemplates {
 }
 
 const DEFAULT_TEMPLATES: ReminderTemplates = {
-  polite: `Namaste {name}! Gentle reminder from ${VENDOR.name}: balance of {balance} is due on {date}. Thank you!`,
-  firm: `Namaste {name}, reminder from ${VENDOR.name}: balance of {balance} was due on {date}. Please settle at your earliest.`,
+  polite: 'Namaste {name}! Gentle reminder from {shop}: balance of ₹{balance} is due on {date}. Thank you!',
+  firm: 'Namaste {name}, reminder from {shop}: balance of ₹{balance} was due on {date}. Please settle at your earliest.',
 };
 
 let cachedFlagsmith: Flagsmith | null = null;
@@ -121,12 +121,17 @@ export async function getReminderConfig(
 
 export function renderReminderMessage(
   template: string,
-  params: { name: string; balance: number; date: string | null },
+  params: { name: string; shop?: string | null; balance: number; date: string | null },
 ): string {
+  // inr() already includes "₹", so replace "₹{balance}" before "{balance}" to prevent "₹₹"
   const formattedBalance = inr(params.balance);
   const formattedDate = params.date ?? 'soon';
+  const shopName = params.shop?.trim() || DEMO_SHOP.profile.name;
+
   return template
     .replaceAll('{name}', params.name)
+    .replaceAll('{shop}', shopName)
+    .replaceAll('₹{balance}', formattedBalance)
     .replaceAll('{balance}', formattedBalance)
     .replaceAll('{date}', formattedDate);
 }

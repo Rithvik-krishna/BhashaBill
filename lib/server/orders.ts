@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { randomInt } from 'crypto';
 import { z } from 'zod';
 import type {
   Lang,
@@ -7,11 +7,23 @@ import type {
   OrderSummary,
   PaymentRequest,
   SaveOrderRequest,
+  VendorProfile,
 } from '@/lib/contract';
 import { lineAmount, round2, totals } from '@/lib/money';
-import { VENDOR } from '@/lib/vendor';
+import { DEMO_SHOP } from '@/lib/vendor';
 
 export const langSchema = z.enum(['kn', 'hi', 'ta', 'en']);
+
+export const vendorProfileSchema: z.ZodType<VendorProfile> = z.object({
+  name: z.string().trim().min(1, 'Shop name is required'),
+  phone: z.string().trim().min(1, 'Shop phone is required'),
+  city: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .transform((v) => (v && v.length > 0 ? v : null)),
+});
 
 export const billItemInputSchema = z.object({
   name_original: z.string().trim().min(1, 'Item original name is required'),
@@ -27,6 +39,8 @@ export const billItemInputSchema = z.object({
 });
 
 export const saveOrderSchema: z.ZodType<SaveOrderRequest> = z.object({
+  vendor: vendorProfileSchema,
+  vendor_key: z.string().trim().min(1, 'vendor_key is required'),
   customer_name: z.string().trim().min(1, 'Customer name is required'),
   customer_phone: z
     .string()
@@ -60,6 +74,10 @@ export const paymentSchema: z.ZodType<PaymentRequest> = z.object({
 export interface OrderRow {
   id: string;
   slug: string;
+  vendor_key?: string;
+  vendor_name?: string | null;
+  vendor_phone?: string | null;
+  vendor_city?: string | null;
   customer_name: string;
   customer_phone: string | null;
   language: Lang;
@@ -92,6 +110,7 @@ export interface PaymentRow {
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SLUG_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 export function isUuid(value: string): boolean {
   return UUID_REGEX.test(value);
@@ -119,7 +138,11 @@ export function makeSlug(customerName: string): string {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 28) || 'order';
-  const suffix = randomBytes(2).toString('hex');
+
+  let suffix = '';
+  for (let i = 0; i < 8; i++) {
+    suffix += SLUG_ALPHABET[randomInt(0, SLUG_ALPHABET.length)];
+  }
   return `${base}-${suffix}`;
 }
 
@@ -139,6 +162,14 @@ export function serializeOrderItems(rows: OrderItemRow[]): OrderItem[] {
         amount: lineAmount(quantity, rate),
       };
     });
+}
+
+export function resolveOrderVendor(order: OrderRow): VendorProfile {
+  return {
+    name: order.vendor_name?.trim() || DEMO_SHOP.profile.name,
+    phone: order.vendor_phone?.trim() || DEMO_SHOP.profile.phone,
+    city: order.vendor_city !== undefined ? order.vendor_city : DEMO_SHOP.profile.city,
+  };
 }
 
 export function buildOrderSummary(
@@ -198,9 +229,6 @@ export function buildOrderDetail(
     transcript: order.transcript ?? '',
     language: order.language,
     items: serializeOrderItems(items),
-    vendor: {
-      name: VENDOR.name,
-      phone: VENDOR.phone,
-    },
+    vendor: resolveOrderVendor(order),
   };
 }

@@ -8,6 +8,13 @@ const BASE = (process.argv[2] || process.env.NEXT_PUBLIC_BASE_URL || 'http://loc
   '',
 );
 
+const VENDOR_KEY = 'smoke-shop';
+const VENDOR = {
+  name: 'Smoke Sweets',
+  phone: '919800000001',
+  city: 'Bengaluru',
+};
+
 async function req(path, init) {
   const res = await fetch(`${BASE}${path}`, init);
   const text = await res.text();
@@ -38,11 +45,18 @@ const flags = await req('/api/flags');
 console.log('2. GET /api/flags ->', flags.status, flags.json);
 assert(flags.ok && typeof flags.json?.tts_readback === 'boolean', 'Flags must return boolean tts_readback');
 
-// 3. Create order (with deliberate server-side money recomputation check)
+// 3. List orders without vendor_key -> must return 400
+const listMissing = await req('/api/orders');
+console.log('3. GET /api/orders (no vendor_key) ->', listMissing.status, listMissing.json);
+assert(listMissing.status === 400, 'GET /api/orders without vendor_key must return 400');
+
+// 4. Create order (with deliberate server-side money recomputation check)
 const created = await req('/api/orders', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
+    vendor_key: VENDOR_KEY,
+    vendor: VENDOR,
     customer_name: 'Smoke Test Customer',
     customer_phone: '919845099999',
     language: 'kn',
@@ -59,56 +73,66 @@ const created = await req('/api/orders', {
     balance: 1,
   }),
 });
-console.log('3. POST /api/orders ->', created.status, created.json);
+console.log('4. POST /api/orders ->', created.status, created.json);
 assert(created.status === 201 && created.json?.id && created.json?.slug, 'Create order must return id + slug');
 
 const { id, slug } = created.json;
+assert(slug.length >= 'smoke-test-customer-'.length + 8, 'Slug must have >= 8 char random suffix');
 
-// 4. Fetch by slug
+// 5. Fetch by slug
 const detail = await req(`/api/orders/${encodeURIComponent(slug)}`);
-console.log('4. GET /api/orders/[slug] ->', detail.status, {
+console.log('5. GET /api/orders/[slug] ->', detail.status, {
   total: detail.json?.total,
   balance: detail.json?.balance,
   items: detail.json?.items?.length,
+  vendor: detail.json?.vendor,
 });
-assert(detail.ok && detail.json.total === 1600 && detail.json.balance === 1100, 'Server must recompute total=1600, balance=1100');
+assert(
+  detail.ok &&
+    detail.json.total === 1600 &&
+    detail.json.balance === 1100 &&
+    detail.json.vendor?.name === VENDOR.name,
+  'Server must recompute total=1600, balance=1100 and return stored vendor snapshot',
+);
 
-// 5. List orders
-const list = await req('/api/orders');
-console.log('5. GET /api/orders ->', list.status, `(${Array.isArray(list.json) ? list.json.length : 0} orders)`);
-assert(list.ok && Array.isArray(list.json) && list.json.some((o) => o.id === id), 'Created order must appear in list');
+// 6. List orders scoped by vendor_key
+const list = await req(`/api/orders?vendor_key=${encodeURIComponent(VENDOR_KEY)}`);
+console.log('6. GET /api/orders?vendor_key= ->', list.status, `(${Array.isArray(list.json) ? list.json.length : 0} orders)`);
+assert(list.ok && Array.isArray(list.json) && list.json.some((o) => o.id === id), 'Created order must appear in vendor list');
 
-// 6. Record partial payment
+// 7. Record partial payment
 const pay1 = await req(`/api/orders/${encodeURIComponent(id)}/payments`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ amount: 600 }),
 });
-console.log('6. POST /api/orders/[id]/payments (600) ->', pay1.status, {
+console.log('7. POST /api/orders/[id]/payments (600) ->', pay1.status, {
   payments_total: pay1.json?.payments_total,
   balance: pay1.json?.balance,
   status: pay1.json?.status,
 });
 assert(pay1.ok && pay1.json.balance === 500 && pay1.json.status === 'pending', 'Balance should be 500 and pending');
 
-// 7. Send reminder
+// 8. Send reminder
 const reminder = await req(`/api/orders/${encodeURIComponent(id)}/reminder`, { method: 'POST' });
-console.log('7. POST /api/orders/[id]/reminder ->', reminder.status, reminder.json);
+console.log('8. POST /api/orders/[id]/reminder ->', reminder.status, reminder.json);
 assert(
   reminder.ok &&
     (reminder.json.variant === 'polite' || reminder.json.variant === 'firm') &&
+    reminder.json.message.includes(VENDOR.name) &&
+    !reminder.json.message.includes('₹₹') &&
     typeof reminder.json.wa_url === 'string' &&
     reminder.json.wa_url.startsWith('https://wa.me/'),
-  'Reminder must return variant, message, and wa_url',
+  'Reminder must interpolate {shop}, avoid ₹₹, and return variant + wa_url',
 );
 
-// 8. Record final payment -> status becomes paid
+// 9. Record final payment -> status becomes paid
 const pay2 = await req(`/api/orders/${encodeURIComponent(id)}/payments`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ amount: 500 }),
 });
-console.log('8. POST /api/orders/[id]/payments (500) ->', pay2.status, {
+console.log('9. POST /api/orders/[id]/payments (500) ->', pay2.status, {
   payments_total: pay2.json?.payments_total,
   balance: pay2.json?.balance,
   status: pay2.json?.status,

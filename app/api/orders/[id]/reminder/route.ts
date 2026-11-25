@@ -54,6 +54,7 @@ export async function POST(
 
     const message = renderReminderMessage(template, {
       name: summary.customer_name,
+      shop: order.vendor_name,
       balance: summary.balance,
       date: summary.due_date,
     });

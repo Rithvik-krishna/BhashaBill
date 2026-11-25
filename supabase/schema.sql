@@ -6,6 +6,10 @@ create extension if not exists pgcrypto;
 create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
+  vendor_key text not null,
+  vendor_name text,
+  vendor_phone text,
+  vendor_city text,
   customer_name text not null,
   customer_phone text,
   language text not null check (language in ('kn', 'hi', 'ta', 'en')),
@@ -47,6 +51,7 @@ create table if not exists public.reminders (
 
 create index if not exists idx_orders_slug on public.orders(slug);
 create index if not exists idx_orders_created_at on public.orders(created_at desc);
+create index if not exists idx_orders_vendor_created on public.orders(vendor_key, created_at desc);
 create index if not exists idx_order_items_order_id on public.order_items(order_id, sort_order);
 create index if not exists idx_payments_order_id on public.payments(order_id);
 create index if not exists idx_reminders_order_id on public.reminders(order_id);

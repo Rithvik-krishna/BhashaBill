@@ -17,12 +17,19 @@ type OrderWithRelations = OrderRow & {
   payments?: PaymentRow[] | null;
 };
 
-export async function GET() {
+export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const vendorKey = (searchParams.get('vendor_key') ?? '').trim();
+  if (!vendorKey) {
+    return Response.json({ message: 'vendor_key is required' }, { status: 400 });
+  }
+
   try {
     const supabase = getSupabaseAdmin();
     const { data, error } = await supabase
       .from('orders')
       .select('*, order_items(*), payments(amount)')
+      .eq('vendor_key', vendorKey)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -86,7 +93,7 @@ export async function POST(req: Request) {
   try {
     const supabase = getSupabaseAdmin();
 
-    // Insert order with one retry in case of rare slug collision
+    // Insert order with retries in case of rare slug collision
     let insertedOrder: { id: string; slug: string } | null = null;
     let lastError: string | null = null;
 
@@ -96,6 +103,10 @@ export async function POST(req: Request) {
         .from('orders')
         .insert({
           slug,
+          vendor_key: input.vendor_key,
+          vendor_name: input.vendor.name,
+          vendor_phone: input.vendor.phone,
+          vendor_city: input.vendor.city,
           customer_name: input.customer_name,
           customer_phone: input.customer_phone,
           language: input.language,

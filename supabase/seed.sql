@@ -1,14 +1,18 @@
 -- BhashaBill Demo Seed Data (idempotent: safe to re-run)
--- Seeds 5 realistic orders: 2 paid, 2 pending, 1 overdue.
+-- Seeds 5 realistic orders: 2 paid, 2 pending, 1 overdue, all under DEMO_SHOP ('demo').
 
 do $$
 declare
   v_id uuid;
 begin
   -- 1. Paid order (Kannada)
-  insert into public.orders (slug, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
+  insert into public.orders (slug, vendor_key, vendor_name, vendor_phone, vendor_city, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
   values (
     'kaveri-diwali-101',
+    'demo',
+    'Lakshmi Sweets',
+    '919000000000',
+    'Mysuru',
     'Kaveriappa',
     '919845011223',
     'kn',
@@ -33,9 +37,13 @@ begin
 
   -- 2. Paid order (Hindi)
   v_id := null;
-  insert into public.orders (slug, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
+  insert into public.orders (slug, vendor_key, vendor_name, vendor_phone, vendor_city, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
   values (
     'rajesh-sharma-102',
+    'demo',
+    'Lakshmi Sweets',
+    '919000000000',
+    'Mysuru',
     'Rajesh Sharma',
     '919811223344',
     'hi',
@@ -59,9 +67,13 @@ begin
 
   -- 3. Pending order (Kannada)
   v_id := null;
-  insert into public.orders (slug, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
+  insert into public.orders (slug, vendor_key, vendor_name, vendor_phone, vendor_city, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
   values (
     'ananya-rao-103',
+    'demo',
+    'Lakshmi Sweets',
+    '919000000000',
+    'Mysuru',
     'Ananya Rao',
     '919900112233',
     'kn',
@@ -85,9 +97,13 @@ begin
 
   -- 4. Pending order with partial payment (Hindi)
   v_id := null;
-  insert into public.orders (slug, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
+  insert into public.orders (slug, vendor_key, vendor_name, vendor_phone, vendor_city, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
   values (
     'meena-devi-104',
+    'demo',
+    'Lakshmi Sweets',
+    '919000000000',
+    'Mysuru',
     'Meena Devi',
     '919740556677',
     'hi',
@@ -114,9 +130,13 @@ begin
 
   -- 5. Overdue order (Kannada)
   v_id := null;
-  insert into public.orders (slug, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
+  insert into public.orders (slug, vendor_key, vendor_name, vendor_phone, vendor_city, customer_name, customer_phone, language, transcript, total, advance_paid, due_date, due_date_text, status, created_at)
   values (
     'suresh-gowda-105',
+    'demo',
+    'Lakshmi Sweets',
+    '919000000000',
+    'Mysuru',
     'Suresh Gowda',
     '919880998877',
     'kn',
